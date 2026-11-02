@@ -82,5 +82,43 @@ target_link_libraries(nimble_host_pc PUBLIC Threads::Threads)
 add_executable(blectl
     main.c
     hci_cdc.c
+    bridge_hid.cpp
+    boot_config.cpp
 )
 target_link_libraries(blectl PRIVATE nimble_host_pc)
+if(APPLE)
+    target_link_libraries(blectl PRIVATE "-framework IOKit" "-framework CoreFoundation")
+endif()
+
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../proto ${CMAKE_CURRENT_BINARY_DIR}/bridge_protocol)
+find_path(HIDAPI_INCLUDE_DIR hidapi.h PATH_SUFFIXES hidapi REQUIRED)
+find_library(HIDAPI_LIBRARY NAMES hidapi hidapi-hidraw hidapi-libusb REQUIRED)
+target_include_directories(blectl PRIVATE ${HIDAPI_INCLUDE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/json)
+target_compile_features(blectl PRIVATE cxx_std_17)
+target_link_libraries(blectl PRIVATE bridge_protocol ${HIDAPI_LIBRARY})
+configure_file(bridge_boot.json bridge_boot.json COPYONLY)
+target_compile_definitions(blectl PRIVATE
+    BLECTL_DEFAULT_CONFIG="${CMAKE_CURRENT_BINARY_DIR}/bridge_boot.json")
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(bridge_protocol_test tests/protocol_test.c)
+    target_link_libraries(bridge_protocol_test PRIVATE bridge_protocol)
+    target_compile_options(bridge_protocol_test PRIVATE -UNDEBUG)
+    add_test(NAME bridge_protocol COMMAND bridge_protocol_test)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    add_test(NAME boot_config COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/boot_config_test.py
+        $<TARGET_FILE:blectl> ${CMAKE_CURRENT_SOURCE_DIR}/bridge_boot.json)
+
+    add_executable(bridge_control_test tests/control_test.c)
+    target_link_libraries(bridge_control_test PRIVATE bridge_protocol)
+    target_include_directories(bridge_control_test PRIVATE
+        tests/stubs ../../app ../../components/ble
+        ../../third_party/cherryusb ../../third_party/cherryusb/core
+        ../../third_party/cherryusb/common)
+    target_compile_options(bridge_control_test PRIVATE -UNDEBUG)
+    target_compile_definitions(bridge_control_test PRIVATE CONFIG_USB_MEMCPY_DISABLE)
+    add_test(NAME bridge_control COMMAND bridge_control_test)
+endif()

@@ -20,6 +20,9 @@ void TIM3_IRQ_enable(uint8_t flag);
 void TIM3_set_timeout(uint32_t count);
 uint32_t TIM3_get_time(void);
 
+/* Initialize SPI/GPIO with the controller held in reset (bridge boot). */
+void ble_controller_prepare(void);
+
 /* Fixed BLE init chain (Interface.c). */
 int32_t ble_interface_init(void);
 int32_t ble_hardware_init(void);

@@ -1,0 +1,44 @@
+syntax = "proto3";
+import "nanopb.proto";
+package bridge;
+enum Operation {
+  STATUS = 0;
+  START = 1;
+  RESET = 2;
+  ARRAY_BEGIN = 3;
+  ARRAY_DATA = 4;
+  ARRAY_COMMIT = 5;
+  BYPASS = 6;
+  HCI_ENABLE = 7;
+}
+enum CoreState {
+  RESET_HELD = 0;
+  ROM = 1;
+  HCI = 2;
+  ERROR = 3;
+}
+enum Result {
+  OK = 0;
+  BUSY = 1;
+  INVALID_ARGUMENT = 2;
+  INVALID_STATE = 3;
+  CRC_MISMATCH = 4;
+  VENDOR_ERROR = 5;
+}
+message Control {
+  // Correlation ID echoed by both BUSY and final replies.
+  uint32 sequence = 1;
+  Operation operation = 2;
+  // Total byte count for ARRAY_BEGIN.
+  uint32 argument = 3;
+  // Contiguous byte offset for ARRAY_DATA.
+  uint32 offset = 4;
+  // CRC-16 of the entire array, supplied at ARRAY_BEGIN.
+  uint32 crc = 5;
+  bytes data = 6 [(nanopb).max_size = 40];
+  Result result = 7;
+  CoreState state = 8;
+  // Vendor array command: 0xbb RAM, 0xcc patch, 0xdd NVDS.
+  uint32 command = 9;
+  sint32 vendor_result = 10;
+}

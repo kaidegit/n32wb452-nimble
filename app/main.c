@@ -3,7 +3,8 @@
  *
  * Common bring-up (both modes):
  *   clocks (SystemInit, 144 MHz HSE PLL) → RTT console → FreeRTOS →
- *   BLE interface/hardware init → NZ8801 firmware download.
+ *   mode-specific controller setup. NimBLE downloads the built-in firmware;
+ *   bridge holds the controller in reset until a HID request arrives.
  *
  * Then, per firmware mode (compile-time switch injected by CMake):
  *   APP_MODE_NIMBLE : NimBLE host on-chip, advertising an echo service.
@@ -35,6 +36,7 @@
 #define MAIN_TASK_STACK  1024
 #define MAIN_TASK_PRIO   4
 
+#if defined(APP_MODE_NIMBLE)
 static void ble_bringup(void)
 {
     int32_t rc;
@@ -59,13 +61,19 @@ static void ble_bringup(void)
     }
 }
 
+#endif
+
 static void main_task(void *arg)
 {
     (void)arg;
 
     LOGI(TAG, "mode: " APP_MODE_NAME);
 
+#if defined(APP_MODE_NIMBLE)
     ble_bringup();
+#else
+    ble_controller_prepare();
+#endif
 
 #if defined(APP_MODE_NIMBLE)
     app_nimble_start();

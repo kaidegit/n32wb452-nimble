@@ -19,7 +19,12 @@
 #include <string.h>
 #include <termios.h>
 #include <unistd.h>
-#include <dirent.h>
+#ifdef __APPLE__
+#include <CoreFoundation/CoreFoundation.h>
+#include <IOKit/IOKitLib.h>
+#include <IOKit/serial/IOSerialKeys.h>
+#include "bridge_protocol.h"
+#endif
 
 #include "nimble/ble.h"
 #include "nimble/hci_common.h"
@@ -45,102 +50,66 @@ const char *hci_cdc_port(void)
     return s_port[0] ? s_port : NULL;
 }
 
-/* Collect /dev/cu.usbmodem* candidates into out; returns count. */
-static int list_cdc_ports(char out[][64], int max)
+#ifdef __APPLE__
+/* Resolve serial services through their USB ancestors. The IOUSB registry plane
+ * does not include serial child services, so parsing `ioreg -p IOUSB` cannot
+ * reliably associate a CDC path with its device. */
+static int usb_ancestor_id(io_registry_entry_t service, CFStringRef key)
 {
-    DIR *d = opendir("/dev");
-    struct dirent *e;
-    int n = 0;
-
-    if (!d) {
-        return 0;
-    }
-    while ((e = readdir(d)) != NULL && n < max) {
-        if (strncmp(e->d_name, "cu.usbmodem", 11) == 0) {
-            snprintf(out[n], 64, "/dev/%s", e->d_name);
-            n++;
+    CFTypeRef value = IORegistryEntrySearchCFProperty(
+        service, kIOServicePlane, key, kCFAllocatorDefault,
+        kIORegistryIterateParents | kIORegistryIterateRecursively);
+    int number = -1;
+    if (value) {
+        if (CFGetTypeID(value) == CFNumberGetTypeID()) {
+            CFNumberGetValue((CFNumberRef)value, kCFNumberIntType, &number);
         }
+        CFRelease(value);
     }
-    closedir(d);
-    return n;
-}
-
-/* Ask ioreg which USB product a serial port belongs to. The USB product
- * string of the enclosing device precedes its serial nodes in the ioreg
- * tree, so track the most recent product while scanning for our port. */
-static void port_product(const char *cu_path, char *prod, size_t prod_cap)
-{
-    char tty[72];
-    char cur_prod[128] = "";
-    FILE *fp;
-    char line[512];
-
-    prod[0] = '\0';
-    /* /dev/cu.usbmodemXXX -> /dev/tty.usbmodemXXX as printed by ioreg */
-    snprintf(tty, sizeof(tty), "%s", cu_path);
-    if (strncmp(tty, "/dev/cu.", 8) == 0) {
-        memmove(tty + 5, tty + 8, strlen(tty) - 7);
-    }
-
-    fp = popen("ioreg -p IOUSB -w 0", "r");
-    if (!fp) {
-        return;
-    }
-    while (fgets(line, sizeof(line), fp)) {
-        char *p;
-        if ((p = strstr(line, "\"USB Product Name\" = \"")) != NULL) {
-            char *v = p + strlen("\"USB Product Name\" = \"");
-            char *q = strchr(v, '"');
-            size_t len = q ? (size_t)(q - v) : 0;
-            if (len >= sizeof(cur_prod)) len = sizeof(cur_prod) - 1;
-            memcpy(cur_prod, v, len);
-            cur_prod[len] = '\0';
-        } else if ((p = strstr(line, "\"IODialinDevice\" = \"")) != NULL) {
-            char *v = p + strlen("\"IODialinDevice\" = \"");
-            char *q = strchr(v, '"');
-            if (q && strncmp(v, tty, (size_t)(q - v)) == 0 && cur_prod[0]) {
-                snprintf(prod, prod_cap, "%s", cur_prod);
-                break;
-            }
-        }
-    }
-    pclose(fp);
+    return number;
 }
 
 const char *hci_cdc_autodetect_port(void)
 {
-    static char found[64];
-    char ports[8][64];
-    char prod[128];
-    int n = list_cdc_ports(ports, 8);
-
-    if (n == 0) {
+    static char found[256];
+    io_iterator_t services;
+    kern_return_t result = IOServiceGetMatchingServices(
+        kIOMainPortDefault, IOServiceMatching(kIOSerialBSDServiceValue), &services);
+    if (result != KERN_SUCCESS) {
         return NULL;
     }
-    if (n == 1) {
-        snprintf(found, sizeof(found), "%s", ports[0]);
-        return found;
-    }
 
-    /* Several CDC devices around (the CMSIS-DAP debugger exposes one too):
-     * prefer our bridge by USB product string. */
-    for (int i = 0; i < n; i++) {
-        port_product(ports[i], prod, sizeof(prod));
-        if (strstr(prod, "N32") || strstr(prod, "Bridge")) {
-            snprintf(found, sizeof(found), "%s", ports[i]);
-            return found;
+    unsigned matches = 0;
+    io_object_t service;
+    while ((service = IOIteratorNext(services)) != IO_OBJECT_NULL) {
+        int vendor = usb_ancestor_id(service, CFSTR("idVendor"));
+        int product = usb_ancestor_id(service, CFSTR("idProduct"));
+        if (vendor == BRIDGE_VID && product == BRIDGE_PID) {
+            CFTypeRef path = IORegistryEntryCreateCFProperty(
+                service, CFSTR(kIOCalloutDeviceKey), kCFAllocatorDefault, 0);
+            if (path) {
+                if (CFGetTypeID(path) == CFStringGetTypeID() &&
+                    CFStringGetCString((CFStringRef)path, found, sizeof(found), kCFStringEncodingUTF8)) {
+                    matches++;
+                }
+                CFRelease(path);
+            }
         }
+        IOObjectRelease(service);
     }
-
-    fprintf(stderr, "blectl: multiple CDC devices found:\n");
-    for (int i = 0; i < n; i++) {
-        port_product(ports[i], prod, sizeof(prod));
-        fprintf(stderr, "  %s  (%s)\n", ports[i], prod[0] ? prod : "unknown product");
+    IOObjectRelease(services);
+    if (matches > 1) {
+        fprintf(stderr, "blectl: multiple N32 bridges found; select one with --port\n");
     }
-    fprintf(stderr, "blectl: pick one with --port; using %s\n", ports[0]);
-    snprintf(found, sizeof(found), "%s", ports[0]);
-    return found;
+    return matches == 1 ? found : NULL;
 }
+#else
+const char *hci_cdc_autodetect_port(void)
+{
+    /* Automatic CDC discovery currently supports macOS. */
+    return NULL;
+}
+#endif
 
 /* ----------------------------------------------------------------- open --*/
 

@@ -50,11 +50,14 @@ extern void ble_clear_wakeup(void);
 
 static SemaphoreHandle_t s_rx_sem;
 static SemaphoreHandle_t s_tx_mutex;
+/* Independent from TX: checked TX may wait for RX to drain a pending event. */
+static SemaphoreHandle_t s_rx_mutex;
 static TaskHandle_t s_rx_task;
 static volatile uint8_t s_initialized;
 
 /* RX activity flag shared with the checked TX path. */
 static volatile int s_rx_active;
+static bool s_rx_enabled;
 
 int ble_spi_rx_pending(void)
 {
@@ -279,9 +282,15 @@ static void hci_rx_task(void *arg)
         if (xSemaphoreTake(s_rx_sem, portMAX_DELAY) != pdTRUE) {
             continue;
         }
+        xSemaphoreTake(s_rx_mutex, portMAX_DELAY);
+        if (!s_rx_enabled) {
+            xSemaphoreGive(s_rx_mutex);
+            continue;
+        }
         s_rx_active = 1;
         int len = hci_spi_read_frame(frame, sizeof(frame));
         s_rx_active = 0;
+        xSemaphoreGive(s_rx_mutex);
 
         if (len <= 0) {
             continue;
@@ -317,6 +326,8 @@ void hci_spi_transport_init(void)
 
     s_tx_mutex = xSemaphoreCreateMutex();
     configASSERT(s_tx_mutex);
+    s_rx_mutex = xSemaphoreCreateMutex();
+    configASSERT(s_rx_mutex);
 
     s_rx_sem = xSemaphoreCreateCounting(16, 0);
     configASSERT(s_rx_sem);
@@ -332,7 +343,12 @@ void hci_spi_transport_init(void)
      * group from Group_4 (FreeRTOS requirement) to Group_2. Restore Group_4
      * and re-encode the EXTI priority afterwards.
      */
+#if defined(APP_MODE_NIMBLE)
+    s_rx_enabled = true;
     eif_spi_recv_irq_enable(1);
+#else
+    s_rx_enabled = false;
+#endif
     NVIC_SetPriorityGrouping(3);   /* Group_4 */
     NVIC_SetPriority(EXTI15_10_IRQn, NVIC_EncodePriority(3, 6, 0));
     NVIC_EnableIRQ(EXTI15_10_IRQn);
@@ -348,3 +364,22 @@ void ble_transport_ll_init(void)
     hci_spi_transport_init();
 }
 #endif
+
+/* Synchronizes with any active SPI read before returning. */
+void hci_spi_set_enabled(int enabled)
+{
+    xSemaphoreTake(s_rx_mutex, portMAX_DELAY);
+    s_rx_enabled = enabled != 0;
+    eif_spi_recv_irq_enable(enabled ? 1 : 0);
+    NVIC_SetPriorityGrouping(3);
+    NVIC_SetPriority(EXTI15_10_IRQn, NVIC_EncodePriority(3, 6, 0));
+    if (!enabled) {
+        while (xSemaphoreTake(s_rx_sem, 0) == pdTRUE) {
+            /* Discard IRQ notifications from before the controller reset. */
+        }
+    }
+    xSemaphoreGive(s_rx_mutex);
+    if (enabled && irq_line_set()) {
+        xSemaphoreGive(s_rx_sem);
+    }
+}

@@ -5,3 +5,7 @@ tools/blectl/build/
 *.swp
 compile_commands.json
 .cache/
+
+__pycache__/
+*.pyc
+third_party/nanopb/generator/proto/nanopb_pb2.py

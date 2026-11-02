@@ -11,6 +11,7 @@
  * NimBLE logs go to stderr; command output goes to stdout.
  */
 #include <errno.h>
+#include <getopt.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -29,6 +30,7 @@
 #include "services/gatt/ble_svc_gatt.h"
 
 #include "hci_cdc.h"
+#include "bridge_hid.h"
 
 /* NUS service/characteristics of the nimble-mode firmware. */
 static const ble_uuid128_t NUS_SVC =
@@ -512,17 +514,28 @@ static void usage(void)
         "usage: blectl [options] <command>\n"
         "\n"
         "commands:\n"
+        "  boot                 run JSON boot sequence over HID\n"
+        "  core-start           release reset and enter ROM download mode\n"
+        "  core-reset           reset controller into ROM download mode\n"
+        "  core-status          query controller state over HID\n"
+        "  array                send configured --array NAME over HID\n"
+        "  bypass / hci-enable  execute a controller control operation\n"
+        "  check-config         validate JSON and print computed CRCs (offline)\n"
         "  info                 show bridge port and controller address\n"
         "  scan                 scan and print advertisers\n"
         "  probe                connect, discover GATT, NUS echo test\n"
         "\n"
         "options:\n"
-        "  -p, --port PATH      serial port (default: first /dev/cu.usbmodem*)\n"
+        "  -p, --port PATH      serial port (default: detect N32 bridge USB ID)\n"
         "  -n, --name SUBSTR    filter/target by advertised name substring\n"
         "  -a, --addr AA:BB:..  filter/target by address\n"
         "  -t, --timeout SEC    scan/connect timeout (default 10)\n"
         "  -w, --write-hex HEX  bytes to write in probe (e.g. \"00 11 22\")\n"
         "      --bdaddr AA:..   set controller BD_ADDR via vendor 0xFC32\n"
+        "      --config PATH    runtime boot JSON (default: build/bridge_boot.json)\n"
+        "      --hid-path PATH  select HID device when multiple bridges exist\n"
+        "      --array NAME     array name for the array command\n"
+        "      --no-boot        skip boot before info/scan/probe\n"
         "  -v                   verbose NimBLE logs\n");
 }
 
@@ -537,34 +550,90 @@ int main(int argc, char **argv)
 {
     const char *port = NULL;
     int verbose = 0;
+    int auto_boot = 1;
+    const char *config = BLECTL_DEFAULT_CONFIG;
+    const char *hid_path = NULL;
+    const char *array_name = NULL;
 
-    argv++; argc--;
-    while (argc > 0) {
-        const char *a = argv[0];
-        if (strcmp(a, "-p") == 0 || strcmp(a, "--port") == 0) { port = argv[1]; argv += 2; argc -= 2; }
-        else if (strcmp(a, "-n") == 0 || strcmp(a, "--name") == 0) { g_name_filter = argv[1]; argv += 2; argc -= 2; }
-        else if (strcmp(a, "-a") == 0 || strcmp(a, "--addr") == 0) { snprintf(g_addr_filter, sizeof(g_addr_filter), "%s", argv[1]); argv += 2; argc -= 2; }
-        else if (strcmp(a, "-t") == 0 || strcmp(a, "--timeout") == 0) { g_scan_timeout = atoi(argv[1]); argv += 2; argc -= 2; }
-        else if (strcmp(a, "-w") == 0 || strcmp(a, "--write-hex") == 0) { g_write_hex = argv[1]; argv += 2; argc -= 2; }
-        else if (strcmp(a, "--bdaddr") == 0) { g_bdaddr = argv[1]; argv += 2; argc -= 2; }
-        else if (strcmp(a, "-v") == 0) { verbose = 1; argv++; argc--; }
-        else if (strcmp(a, "-h") == 0 || strcmp(a, "--help") == 0) { usage(); return 0; }
-        else if (a[0] == '-') { fprintf(stderr, "unknown option %s\n", a); usage(); return 2; }
-        else { break; }
+    enum {
+        OPT_BDADDR = 256,
+        OPT_CONFIG,
+        OPT_HID_PATH,
+        OPT_ARRAY,
+        OPT_NO_BOOT
+    };
+    static const struct option options[] = {
+        { "port",      required_argument, NULL, 'p' },
+        { "name",      required_argument, NULL, 'n' },
+        { "addr",      required_argument, NULL, 'a' },
+        { "timeout",   required_argument, NULL, 't' },
+        { "write-hex", required_argument, NULL, 'w' },
+        { "bdaddr",    required_argument, NULL, OPT_BDADDR },
+        { "config",    required_argument, NULL, OPT_CONFIG },
+        { "hid-path",  required_argument, NULL, OPT_HID_PATH },
+        { "array",     required_argument, NULL, OPT_ARRAY },
+        { "no-boot",   no_argument,       NULL, OPT_NO_BOOT },
+        { "help",      no_argument,       NULL, 'h' },
+        { NULL, 0, NULL, 0 }
+    };
+    int option;
+    while ((option = getopt_long(argc, argv, "p:n:a:t:w:vh", options, NULL)) != -1) {
+        switch (option) {
+        case 'p': port = optarg; break;
+        case 'n': g_name_filter = optarg; break;
+        case 'a': snprintf(g_addr_filter, sizeof(g_addr_filter), "%s", optarg); break;
+        case 't': {
+            char *end;
+            long seconds = strtol(optarg, &end, 10);
+            if (*optarg == '\0' || *end != '\0' || seconds < 1 || seconds > 3600) {
+                fprintf(stderr, "blectl: timeout must be 1..3600 seconds\n");
+                return 2;
+            }
+            g_scan_timeout = (int)seconds;
+            break;
+        }
+        case 'w': g_write_hex = optarg; break;
+        case 'v': verbose = 1; break;
+        case 'h': usage(); return 0;
+        case OPT_BDADDR: g_bdaddr = optarg; break;
+        case OPT_CONFIG: config = optarg; break;
+        case OPT_HID_PATH: hid_path = optarg; break;
+        case OPT_ARRAY: array_name = optarg; break;
+        case OPT_NO_BOOT: auto_boot = 0; break;
+        default: usage(); return 2;
+        }
     }
-
-    if (argc != 1) {
+    if (argc - optind != 1) {
         usage();
         return 2;
     }
-    g_cmd = argv[0];
+    g_cmd = argv[optind];
+
+    const char *hid_commands[] = {
+        "boot", "core-start", "core-reset", "core-status", "array",
+        "bypass", "hci-enable", "check-config"
+    };
+    for (size_t i = 0; i < sizeof(hid_commands) / sizeof(hid_commands[0]); i++) {
+        if (strcmp(g_cmd, hid_commands[i]) == 0) {
+            return bridge_hid_run(g_cmd, config, hid_path, array_name);
+        }
+    }
+    if (strcmp(g_cmd, "info") != 0 && strcmp(g_cmd, "scan") != 0 &&
+        strcmp(g_cmd, "probe") != 0) {
+        fprintf(stderr, "unknown command %s\n", g_cmd);
+        return 2;
+    }
 
     if (!port) {
         port = hci_cdc_autodetect_port();
         if (!port) {
-            fprintf(stderr, "blectl: no /dev/cu.usbmodem* device found (bridge not plugged in?)\n");
+            fprintf(stderr, "blectl: no unique N32 bridge CDC found (check USB or use --port)\n");
             return 1;
         }
+    }
+
+    if (auto_boot && bridge_hid_run("boot", config, hid_path, NULL) != 0) {
+        return 1;
     }
 
     if (hci_cdc_open(port) != 0) {

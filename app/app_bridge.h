@@ -8,6 +8,9 @@ void bridge_handle_controller_frame(const uint8_t *frame, uint16_t len);
 
 void app_bridge_start(void);
 
+void bridge_spi_lock(void);
+void bridge_spi_unlock(void);
+
 #endif /* APP_BRIDGE_H */
 
 #endif /* APP_MODE_BRIDGE */

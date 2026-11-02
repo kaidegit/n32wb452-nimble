@@ -9,6 +9,9 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "ble_platform.h"
+#include "Eif_iom.h"
+#include "Eif_spi.h"
+#include "Eif_timer.h"
 #include "app.h"          /* struct app_env_tag (RW profile header) */
 #include "ke_event.h"
 #include "n32wb452_ble_api.h"   /* bt_attr_param for g_bt_init */
@@ -73,4 +76,18 @@ void TIM3_set_timeout(uint32_t count)
 uint32_t TIM3_get_time(void)
 {
     return TIM3->CNT;
+}
+
+/* Bridge needs a working SPI bus while the controller stays in reset.
+ * Unlike ble_hardware_init(), this does not pulse/release the reset pin. */
+void ble_controller_prepare(void)
+{
+    ble_interface_init();
+    eif_spi_recv_irq_enable(0);
+    eif_gpio_init();
+    eif_pull_down_reset_io();
+    eif_timer_init();
+    eif_spi_init();
+    eif_pull_down_reset_io();
+    NVIC_SetPriorityGrouping(3); /* FreeRTOS: restore Group_4 after vendor IO setup. */
 }

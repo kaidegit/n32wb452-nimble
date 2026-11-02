@@ -20,8 +20,10 @@
 void hci_spi_irq_handler(void);
 
 /* Bring the transport up: sync objects, RX task, SPI IRQ enable + NVIC
- * priority-group fix. Safe to call once after ble_initdata_down(). */
+ * priority-group fix. Bridge creates the task with RX disabled until HID enables it. */
 void hci_spi_transport_init(void);
+/* Wait for any active read, then enable/disable controller RX for ROM access. */
+void hci_spi_set_enabled(int enabled);
 
 /* Read one H4 frame from the controller into a flat buffer
  * (buf[0] = H4 type, followed by the packet). Returns the total length or

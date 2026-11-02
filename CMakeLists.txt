@@ -118,12 +118,14 @@ add_subdirectory(components/nimble_host)
 
 # ---------------------------------------------------------- CherryUSB -----
 add_subdirectory(components/cherryusb)
+add_subdirectory(proto)
 
 # ============================================================== target ====
 add_executable(n32wb452_ble.elf
     app/main.c
     app/app_nimble.c
     app/app_bridge.c
+    app/bridge_control.c
     app/n32wb452_it.c
     app/syscalls.c
     components/ble/hci_spi.c
@@ -152,7 +154,7 @@ else()
     target_sources(n32wb452_ble.elf PRIVATE
         ${CHERRYUSB_ROOT}/port/fsdev/usb_glue_nations.c)
     target_link_libraries(n32wb452_ble.elf PRIVATE
-        ble_platform cherryusb n32wb452_sdk segger_rtt)
+        ble_platform cherryusb bridge_protocol n32wb452_sdk segger_rtt)
 endif()
 
 add_custom_command(TARGET n32wb452_ble.elf POST_BUILD

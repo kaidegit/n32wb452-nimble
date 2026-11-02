@@ -5,8 +5,7 @@
  *   macOS host ── CDC ACM bulk ──► H4 parser ──► SPI ──► NZ8801 controller
  *   macOS host ◄── CDC ACM bulk ◄── frame queue ◄── SPI ◄── (PE14 IRQ)
  *
- * The NZ8801 firmware download already ran at boot (main.c), so by the
- * time USB enumerates the controller is live and speaking H4.
+ * HID controls controller reset and firmware download before H4 is enabled.
  *
  * Flow notes:
  *  - USB→SPI: one 64-byte OUT transfer per packet; bytes land in a ring
@@ -30,6 +29,7 @@
 #include "n32wb452.h"
 #include "log.h"
 #include "app_bridge.h"
+#include "bridge_control.h"
 #include "hci_spi.h"
 #include "ble_spi_tx.h"
 
@@ -44,17 +44,24 @@
 #define USBD_PID        0x0002
 #define USBD_MAX_POWER  100
 
-#define USB_CONFIG_SIZE (9 + CDC_ACM_DESCRIPTOR_LEN)
+#define HID_IN_EP       0x84
+#define HID_DESCRIPTOR_SIZE (9 + 9 + 7)
+#define USB_CONFIG_SIZE (9 + CDC_ACM_DESCRIPTOR_LEN + HID_DESCRIPTOR_SIZE)
 
 /* ------------------------------------------------------------ descriptors */
 
 static const uint8_t s_dev_desc[] = {
-    USB_DEVICE_DESCRIPTOR_INIT(USB_2_0, 0xEF, 0x02, 0x01, USBD_VID, USBD_PID, 0x0100, 0x01)
+    USB_DEVICE_DESCRIPTOR_INIT(USB_2_0, 0xEF, 0x02, 0x01, USBD_VID, USBD_PID, 0x0200, 0x01)
 };
 
 static const uint8_t s_cfg_desc[] = {
-    USB_CONFIG_DESCRIPTOR_INIT(USB_CONFIG_SIZE, 0x02, 0x01, USB_CONFIG_BUS_POWERED, USBD_MAX_POWER),
-    CDC_ACM_DESCRIPTOR_INIT(0x00, CDC_INT_EP, CDC_OUT_EP, CDC_IN_EP, CDC_MAX_MPS, 0x02)
+    USB_CONFIG_DESCRIPTOR_INIT(USB_CONFIG_SIZE, 0x03, 0x01, USB_CONFIG_BUS_POWERED, USBD_MAX_POWER),
+    CDC_ACM_DESCRIPTOR_INIT(0x00, CDC_INT_EP, CDC_OUT_EP, CDC_IN_EP, CDC_MAX_MPS, 0x02),
+    /* Interface 2: vendor HID, feature reports over EP0, interrupt IN reserved. */
+    USB_INTERFACE_DESCRIPTOR_INIT(2, 0, 1, 3, 0, 0, 0),
+    /* HID 1.11, no country code, one report descriptor. */
+    9, 0x21, 0x11, 0x01, 0, 1, 0x22, BRIDGE_HID_REPORT_DESC_SIZE, 0,
+    USB_ENDPOINT_DESCRIPTOR_INIT(HID_IN_EP, USB_ENDPOINT_TYPE_INTERRUPT, 64, 10)
 };
 
 static const char *const s_strings[] = {
@@ -131,6 +138,7 @@ static void usbd_event_cb(uint8_t busid, uint8_t event)
         break;
     case USBD_EVENT_RESET:
     case USBD_EVENT_DISCONNECTED:
+        bridge_control_usb_reset();
         s_usb_configured = false;
         s_dtr = false;
         break;
@@ -201,13 +209,23 @@ static uint8_t ring_peek(uint32_t off)
     return s_usb_ring[(s_usb_ring_tail + off) % USB_RX_RING_SIZE];
 }
 
+void bridge_spi_lock(void)
+{
+    xSemaphoreTake(s_spi_tx_mutex, portMAX_DELAY);
+}
+
+void bridge_spi_unlock(void)
+{
+    xSemaphoreGive(s_spi_tx_mutex);
+}
+
 /* Forward one complete H4 frame from the ring to the controller.
  * Returns 0: frame forwarded; -1: incomplete (need more bytes);
  * -2: ring empty. */
 static int forward_one_frame(void)
 {
     uint8_t frame[1 + 255 + 5];
-    uint16_t need;
+    uint32_t need;
 
     if (s_usb_ring_tail == s_usb_ring_head) {
         return -2;
@@ -240,6 +258,10 @@ static int forward_one_frame(void)
         need += (uint16_t)ring_peek(3) | ((uint16_t)ring_peek(4) << 8);
     }
 
+    if (need > sizeof(frame)) {
+        s_usb_ring_tail = s_usb_ring_head;
+        return -1;
+    }
     if (avail < need) {
         return -1;
     }
@@ -251,11 +273,14 @@ static int forward_one_frame(void)
     if (xSemaphoreTake(s_spi_tx_mutex, portMAX_DELAY) != pdTRUE) {
         return -1;
     }
-    int rc = ble_spi_send_checked(frame, need);
+    int rc = -1;
+    if (bridge_core_state == bridge_CoreState_HCI) {
+        rc = ble_spi_send_checked(frame, (uint16_t)need);
+    }
     xSemaphoreGive(s_spi_tx_mutex);
 
     if (rc != 0) {
-        LOGE(TAG, "SPI TX dropped H4 frame (type 0x%02X len %u)", type, need);
+        LOGE(TAG, "SPI TX dropped H4 frame (type 0x%02X len %u)", type, (unsigned)need);
     }
     return 0;
 }
@@ -371,11 +396,12 @@ void app_bridge_start(void)
     usbd_desc_register(0, &s_cdc_desc);
     usbd_add_interface(0, usbd_cdc_acm_init_intf(0, &s_intf0));
     usbd_add_interface(0, usbd_cdc_acm_init_intf(0, &s_intf1));
+    usbd_add_interface(0, bridge_control_init());
     usbd_add_endpoint(0, &s_cdc_out_ep);
     usbd_add_endpoint(0, &s_cdc_in_ep);
     usbd_initialize(0, USB_BASE, usbd_event_cb);
 
-    LOGI(TAG, "cdc bridge started");
+    LOGI(TAG, "CDC + HID bridge started; controller held in reset");
 }
 
 #endif /* APP_MODE_BRIDGE */

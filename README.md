@@ -9,7 +9,7 @@ N32WB452 上的 Apache NimBLE 工程。闭源 NZ8801 BLE controller（片内协�
 │  广播 NUS 兼容 echo 服务 + 7A02480E 测试服务（uptime/echo/PHY）              │
 └──────────────────────────────────────────────────────────────────────────────┘
 ┌─────────────────────────────── ② bridge 固件 ───────────────────────────────┐
-│  N32WB452 M4: USB CDC ACM ⇄ SPI H4 透传（NZ8801 调试通道，无 host 逻辑）     │
+│  N32WB452 M4: USB CDC ACM ⇄ SPI H4；HID 控制小核复位和运行时固件下载     │
 └──────────────────────────────────────────────────────────────────────────────┘
 ┌─────────────────────────────── ③ macOS blectl ──────────────────────────────┐
 │  Mac: NimBLE host（linux NPL + Darwin 后端）── /dev/cu.usbmodem* ── ②       │
@@ -40,16 +40,17 @@ CMakeLists.txt                 MCU 固件构建（模式注入、flash/rtt 目�
 toolchain-arm-gcc.cmake        arm-none-eabi 工具链（自动探测本机路径）
 N32WB452_Series.yaml           probe-rs 芯片定义
 app/                           固件源码
-  main.c                       公共启动：时钟/RTT/FreeRTOS/固件下载链 + 模式分发
+  main.c                       公共启动：时钟/RTT/FreeRTOS + 模式分发
   app_nimble.c/.h              ① NimBLE host + NUS echo 服务 + 7A02480E 测试服务 + 广播 + vendor 0xFC32
   app_bridge.c/.h              ② CherryUSB CDC ⇄ SPI H4 双向转发
+  bridge_control.c/.h          HID 控制任务、小核状态及数组上传
   n32wb452_it.c/.h             EXTI15_10/TIM3/fault dump（SVC/PendSV 由 FreeRTOS 宏映射）
   syscalls.c                   printf→RTT、_sbrk
   FreeRTOSConfig.h / n32wb452_flash.ld / n32wb452_conf.h / log.h
 components/
   ble/                         SPI HCI transport（hci_spi.c/ble_spi_tx.c/hci_fixup.c/ble_platform.c）
   nimble_host/                 NimBLE host 静态库 + syscfg 覆盖 + log 桩
-  cherryusb/                   CherryUSB device（CDC ACM）
+  cherryusb/                   CherryUSB device（CDC ACM，bridge 另加 vendor HID）
 third_party/                   裁剪引入的依赖（见下）
 tools/
   blectl/                      ③ macOS NimBLE host 命令行工具
@@ -69,6 +70,7 @@ docs/ble-test-2026-11-02.md    macOS/安卓双平台板级验收测试报告
 | `freertos/` | FreeRTOS-Kernel v202411.00 | 内核 + ARM_CM4F 端口 + heap_4 |
 | `segger_rtt/` | SEGGER RTT | 日志通道（终端 0） |
 | `cherryusb/` | CherryUSB | usbd core + CDC ACM + fsdev(nations glue) |
+| `nanopb/` | nanopb 0.4.9.1 | 固件与 blectl 共用的 protobuf 编解码 |
 
 ## 构建
 
@@ -86,9 +88,9 @@ cmake --build build-bridge
 
 产物 `build-*/n32wb452_ble_{nimble,bridge}`（+ .bin/.hex/.map）。
 当前体积（链接器统计）：nimble 90028 bytes flash / 82360 bytes RAM；
-bridge 44052 bytes flash / 82304 bytes RAM。RAM 包含 FreeRTOS 56 KiB 堆、libc 8 KiB 堆与 MSP 最小预留。
+bridge 加入 HID 后约 54 KiB flash / 97 KiB RAM。RAM 包含 FreeRTOS 56 KiB 堆、libc 8 KiB 堆与 MSP 最小预留。
 
-macOS 工具：
+macOS 工具（需要 HIDAPI，例如 `brew install hidapi`；工具专用 JSON 库在 `tools/blectl/third_party`）：
 
 ```bash
 cmake -S tools/blectl -B tools/blectl/build -GNinja
@@ -116,17 +118,22 @@ probe-rs attach   --chip-description-path N32WB452_Series.yaml --chip N32WB452CE
 
 ## blectl 用法（bridge 固件 + Mac）
 
+bridge 上电将小核保持在复位状态，等待 HID 命令。blectl 的 info/scan/probe 默认先从
+运行时 JSON 下载数组并启动小核；可用 `--no-boot` 跳过。完整协议、JSON 格式和单步命令见
+[Bridge HID 控制文档](docs/bridge-hid.md)。
+
 ```bash
 tools/blectl/build/blectl info                                   # 桥端口 + controller 地址
-tools/blectl/build/blectl scan -t 10                             # 扫描
-tools/blectl/build/blectl scan --name N32 -t 10                  # 按名字过滤
-tools/blectl/build/blectl probe --name N32-NimBLE                # 连接 + GATT 发现 + NUS 回环
-tools/blectl/build/blectl probe --addr F1:AB:26:68:84:66 -w "00 11 22"
+tools/blectl/build/blectl -t 10 scan                             # 扫描
+tools/blectl/build/blectl --name N32 -t 10 scan                  # 按名字过滤
+tools/blectl/build/blectl --name N32-NimBLE probe                # 连接 + GATT 发现 + NUS 回环
+tools/blectl/build/blectl --addr F1:AB:26:68:84:66 -w "00 11 22" probe
 tools/blectl/build/blectl --port /dev/cu.usbmodemXXX scan        # 多 CDC 时显式指定
 ```
 
-多 CDC 设备时自动识别会按 USB 产品名（"N32 BLE HCI Bridge"）优先选择，
-并列出全部候选；NimBLE 内部日志走 stderr，命令输出走 stdout（便于管道处理）。
+macOS 通过 IOKit 查找串口对应 USB 祖先的 VID:PID（`34b7:0002`），不会误选 CMSIS-DAP
+调试器的 CDC；多块 N32 bridge 同时连接时需显式指定 `--port` 和 `--hid-path`。
+NimBLE 内部日志走 stderr，命令输出走 stdout（便于管道处理）。
 
 ## 已内置的 controller 兼容补丁（勿删）
 
@@ -157,7 +164,7 @@ tools/blectl/build/blectl --port /dev/cu.usbmodemXXX scan        # 多 CDC 时�
 ## 当前状态
 
 - 两种固件均完成构建、烧录与启动验证；NimBLE 广播已由 Mac 扫描确认。
-- bridge 已枚举 USB CDC 串口，blectl 返回 `host synced: yes`。
+- 原有 CDC bridge 已通过板级验证；本次新增 HID 和主机下载流程已通过构建及原生测试，尚待板级验证。
 - macOS / 安卓双平台板级验收（广播/连接/GATT 发现/echo）通过，报告见
   [docs/ble-test-2026-11-02.md](docs/ble-test-2026-11-02.md)。
 - 修复原因、历史 HardFault 的复现边界和验证日志见 [docs/BOOT_FIX.md](docs/BOOT_FIX.md)。
