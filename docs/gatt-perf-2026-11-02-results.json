@@ -976,5 +976,15 @@
       "macos": "ProductName:\t\tmacOS\nProductVersion:\t\t15.7.5\nBuildVersion:\t\t24G624\n"
     }
   },
-  "total_verified_bytes": 6895798
+  "total_verified_bytes": 6895798,
+  "external_phy_verification": {
+    "source": "User confirmation using nRF Connect",
+    "modes": [
+      "nimble",
+      "bridge"
+    ],
+    "reported_phy": "LE 1M",
+    "scope": "External confirmation; not an automated before/after PHY read for each historical Mac throughput connection"
+  },
+  "internal_hci_transport": "QSPI H4 between M4F and NZ8801"
 }

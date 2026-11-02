@@ -5,11 +5,11 @@ N32WB452 上的 Apache NimBLE 工程。闭源 NZ8801 BLE controller（片内协�
 
 ```
 ┌─────────────────────────────── ① nimble 固件 ───────────────────────────────┐
-│  N32WB452 M4F: FreeRTOS + NimBLE host ── SPI HCI (H4) ── NZ8801 controller  │
+│  N32WB452 M4F: FreeRTOS + NimBLE host ── QSPI HCI (H4) ── NZ8801 controller  │
 │  广播 NUS 兼容 echo 服务 + 7A02480E 测试服务（uptime/echo/PHY）              │
 └──────────────────────────────────────────────────────────────────────────────┘
 ┌─────────────────────────────── ② bridge 固件 ───────────────────────────────┐
-│  N32WB452 M4: USB CDC ACM ⇄ SPI H4；HID 控制小核复位和运行时固件下载     │
+│  N32WB452 M4: USB CDC ACM ⇄ QSPI H4；HID 控制小核复位和运行时固件下载     │
 └──────────────────────────────────────────────────────────────────────────────┘
 ┌─────────────────────────────── ③ macOS blectl ──────────────────────────────┐
 │  Mac: NimBLE host（linux NPL + Darwin 后端）── /dev/cu.usbmodem* ── ②       │
@@ -23,7 +23,7 @@ N32WB452 上的 Apache NimBLE 工程。闭源 NZ8801 BLE controller（片内协�
 
 - N32WB452：Cortex-M4F @144MHz，512K flash，128K SRAM。
 - BLE controller 是片内 NZ8801 协处理器（纯 LE，RivieraWaves 栈，mask ROM ≥620KB），
-  通过 SPI1 + 三根 GPIO 与大核相连：
+  通过内部 QSPI + 三根 GPIO 与大核相连：
   - RESET（大核→小核，复位/进入下载模式）
   - PD6 ready/wakeup（大核→小核）
   - PE14 data-valid IRQ（小核→大核，EXTI15_10）
@@ -48,7 +48,7 @@ app/                           固件源码
   syscalls.c                   printf→RTT、_sbrk
   FreeRTOSConfig.h / n32wb452_flash.ld / n32wb452_conf.h / log.h
 components/
-  ble/                         SPI HCI transport（hci_spi.c/ble_spi_tx.c/hci_fixup.c/ble_platform.c）
+  ble/                         QSPI HCI transport（hci_spi.c/ble_spi_tx.c/hci_fixup.c/ble_platform.c）
   nimble_host/                 NimBLE host 静态库 + syscfg 覆盖 + log 桩
   cherryusb/                   CherryUSB device（CDC ACM，bridge 另加 vendor HID）
 third_party/                   裁剪引入的依赖（见下）
