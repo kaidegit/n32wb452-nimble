@@ -1,6 +1,6 @@
 /*
  * NimBLE syscfg for blectl (macOS host over USB CDC H4 bridge).
- * Central + observer roles, full GATT client.
+ * Central + observer and benchmark peripheral roles, full GATT client.
  */
 #ifndef H_MYNEWT_SYSCFG_
 #define H_MYNEWT_SYSCFG_
@@ -52,12 +52,12 @@
 #define MYNEWT_VAL_BLE_HS_FLOW_CTRL            (0)
 #define MYNEWT_VAL_BLE_HS_STOP_ON_SHUTDOWN     (1)
 
-/* Roles: central + observer */
-#define MYNEWT_VAL_BLE_ROLE_PERIPHERAL         (0)
+/* One link: central tools or the GATT benchmark peripheral. */
+#define MYNEWT_VAL_BLE_ROLE_PERIPHERAL         (1)
 #define MYNEWT_VAL_BLE_ROLE_CENTRAL            (1)
-#define MYNEWT_VAL_BLE_ROLE_BROADCASTER        (0)
+#define MYNEWT_VAL_BLE_ROLE_BROADCASTER        (1)
 #define MYNEWT_VAL_BLE_ROLE_OBSERVER           (1)
-#define MYNEWT_VAL_BLE_MAX_CONNECTIONS         (2)
+#define MYNEWT_VAL_BLE_MAX_CONNECTIONS         (1)
 
 /* SM: legacy, no bonding, just-in-case the peer requests pairing */
 #define MYNEWT_VAL_BLE_SM_LEGACY               (1)
@@ -81,23 +81,23 @@
 #define MYNEWT_VAL_MSYS_2_BLOCK_COUNT          (0)
 #define MYNEWT_VAL_MSYS_2_BLOCK_SIZE           (0)
 
-/* ATT / GATT (client features enabled) */
+/* ATT / GATT: client plus the benchmark server. */
 #define MYNEWT_VAL_BLE_ATT_PREFERRED_MTU       (247)
 #define MYNEWT_VAL_BLE_GATT_MAX_PROCS          (4)
-#define MYNEWT_VAL_BLE_ATT_SVR_FIND_INFO       (0)
-#define MYNEWT_VAL_BLE_ATT_SVR_FIND_TYPE       (0)
-#define MYNEWT_VAL_BLE_ATT_SVR_READ_TYPE       (0)
-#define MYNEWT_VAL_BLE_ATT_SVR_READ            (0)
-#define MYNEWT_VAL_BLE_ATT_SVR_READ_BLOB       (0)
+#define MYNEWT_VAL_BLE_ATT_SVR_FIND_INFO       (1)
+#define MYNEWT_VAL_BLE_ATT_SVR_FIND_TYPE       (1)
+#define MYNEWT_VAL_BLE_ATT_SVR_READ_TYPE       (1)
+#define MYNEWT_VAL_BLE_ATT_SVR_READ            (1)
+#define MYNEWT_VAL_BLE_ATT_SVR_READ_BLOB       (1)
 #define MYNEWT_VAL_BLE_ATT_SVR_READ_MULT       (0)
-#define MYNEWT_VAL_BLE_ATT_SVR_READ_GROUP_TYPE (0)
-#define MYNEWT_VAL_BLE_ATT_SVR_WRITE           (0)
-#define MYNEWT_VAL_BLE_ATT_SVR_WRITE_NO_RSP    (0)
+#define MYNEWT_VAL_BLE_ATT_SVR_READ_GROUP_TYPE (1)
+#define MYNEWT_VAL_BLE_ATT_SVR_WRITE           (1)
+#define MYNEWT_VAL_BLE_ATT_SVR_WRITE_NO_RSP    (1)
 #define MYNEWT_VAL_BLE_ATT_SVR_SIGNED_WRITE    (0)
 #define MYNEWT_VAL_BLE_ATT_SVR_QUEUED_WRITE    (0)
 #define MYNEWT_VAL_BLE_ATT_SVR_QUEUED_WRITE_TMO (30000)
 #define MYNEWT_VAL_BLE_ATT_SVR_INDICATE        (0)
-#define MYNEWT_VAL_BLE_ATT_SVR_NOTIFY          (0)
+#define MYNEWT_VAL_BLE_ATT_SVR_NOTIFY          (1)
 #define MYNEWT_VAL_BLE_ATT_SVR_NOTIFY_MULTI    (0)
 #define MYNEWT_VAL_BLE_ATT_SVR_MAX_PREP_ENTRIES (0)
 #define MYNEWT_VAL_BLE_GATT_DISC_ALL_SVCS      (1)
@@ -116,7 +116,7 @@
 #define MYNEWT_VAL_BLE_GATT_WRITE              (1)
 #define MYNEWT_VAL_BLE_GATT_WRITE_LONG         (0)
 #define MYNEWT_VAL_BLE_GATT_WRITE_RELIABLE     (0)
-#define MYNEWT_VAL_BLE_GATT_NOTIFY             (0)
+#define MYNEWT_VAL_BLE_GATT_NOTIFY             (1)
 #define MYNEWT_VAL_BLE_GATT_INDICATE           (0)
 #define MYNEWT_VAL_BLE_GATT_NOTIFY_MULTIPLE    (0)
 #define MYNEWT_VAL_BLE_GATT_READ_MAX_ATTRS     (8)

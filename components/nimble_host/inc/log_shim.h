@@ -15,7 +15,7 @@
 
 /* Compile-time floor: 0=all, 1 silences DEBUG, 2 silences INFO as well. */
 #ifndef NIMBLE_SHIM_LOG_LEVEL
-#define NIMBLE_SHIM_LOG_LEVEL 1
+#define NIMBLE_SHIM_LOG_LEVEL 2
 #endif
 
 static inline const char *n32_log_lvl_str(int lvl)

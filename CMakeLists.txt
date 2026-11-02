@@ -145,6 +145,10 @@ set_target_properties(n32wb452_ble.elf PROPERTIES
 
 if(N32WB452_APP_MODE STREQUAL "nimble")
     target_compile_definitions(n32wb452_ble.elf PRIVATE APP_MODE_NIMBLE=1)
+    target_sources(n32wb452_ble.elf PRIVATE
+        components/gatt_perf/gatt_perf.c
+        components/gatt_perf/perf_clock_n32.c)
+    target_include_directories(n32wb452_ble.elf PRIVATE components/gatt_perf)
     target_link_libraries(n32wb452_ble.elf PRIVATE
         ble_platform nimble_host n32wb452_sdk segger_rtt)
 else()

@@ -81,11 +81,15 @@ target_link_libraries(nimble_host_pc PUBLIC Threads::Threads)
 # --------------------------------------------------------------- tool -----
 add_executable(blectl
     main.c
+    perf_server.c
+    ../../components/gatt_perf/gatt_perf.c
+    ../../components/ble/hci_fixup.c
     hci_cdc.c
     bridge_hid.cpp
     boot_config.cpp
 )
 target_link_libraries(blectl PRIVATE nimble_host_pc)
+target_include_directories(blectl PRIVATE ../../components/gatt_perf ../../components/ble)
 if(APPLE)
     target_link_libraries(blectl PRIVATE "-framework IOKit" "-framework CoreFoundation")
 endif()
@@ -103,11 +107,22 @@ target_compile_definitions(blectl PRIVATE
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(hci_link_stats_test tests/hci_link_stats_test.c ../../components/ble/hci_fixup.c)
+    target_include_directories(hci_link_stats_test PRIVATE ../../components/ble)
+    target_compile_options(hci_link_stats_test PRIVATE -UNDEBUG)
+    add_test(NAME hci_link_stats COMMAND hci_link_stats_test)
+
+    add_executable(gatt_perf_test tests/gatt_perf_test.c)
+    target_include_directories(gatt_perf_test PRIVATE tests/perf_stubs ../../components/ble)
+    target_compile_options(gatt_perf_test PRIVATE -UNDEBUG)
+    add_test(NAME gatt_perf COMMAND gatt_perf_test)
     add_executable(bridge_protocol_test tests/protocol_test.c)
     target_link_libraries(bridge_protocol_test PRIVATE bridge_protocol)
     target_compile_options(bridge_protocol_test PRIVATE -UNDEBUG)
     add_test(NAME bridge_protocol COMMAND bridge_protocol_test)
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    add_test(NAME gatt_perf_runner COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../macos-gatt-perf/test_runner.py)
     add_test(NAME boot_config COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/boot_config_test.py
         $<TARGET_FILE:blectl> ${CMAKE_CURRENT_SOURCE_DIR}/bridge_boot.json)

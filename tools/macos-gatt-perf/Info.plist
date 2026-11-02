@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleIdentifier</key><string>local.n32.macos-gatt-perf</string>
+  <key>CFBundleName</key><string>N32 GATT Performance</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>NSBluetoothAlwaysUsageDescription</key>
+  <string>Scan for and test the N32WB452 NimBLE development board.</string>
+  <key>NSBluetoothPeripheralUsageDescription</key>
+  <string>Scan for and test the N32WB452 NimBLE development board.</string>
+</dict></plist>

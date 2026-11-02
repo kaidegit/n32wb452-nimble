@@ -31,6 +31,7 @@
 
 #include "hci_cdc.h"
 #include "bridge_hid.h"
+#include "perf_server.h"
 
 /* NUS service/characteristics of the nimble-mode firmware. */
 static const ble_uuid128_t NUS_SVC =
@@ -130,6 +131,7 @@ static void on_sync(void)
             ble_hs_id_set_pub(addr_le);
         }
     }
+    if (strcmp(g_cmd, "perf-server") == 0) perf_server_on_sync();
 }
 
 static int wait_sync(int timeout_ms)
@@ -524,6 +526,7 @@ static void usage(void)
         "  info                 show bridge port and controller address\n"
         "  scan                 scan and print advertisers\n"
         "  probe                connect, discover GATT, NUS echo test\n"
+        "  perf-server          advertise shared GATT throughput service\n"
         "\n"
         "options:\n"
         "  -p, --port PATH      serial port (default: detect N32 bridge USB ID)\n"
@@ -608,6 +611,9 @@ int main(int argc, char **argv)
         return 2;
     }
     g_cmd = argv[optind];
+    if (strcmp(g_cmd, "perf-server") == 0 && !g_bdaddr) {
+        g_bdaddr = "1E:AB:26:68:84:68";
+    }
 
     const char *hid_commands[] = {
         "boot", "core-start", "core-reset", "core-status", "array",
@@ -619,7 +625,7 @@ int main(int argc, char **argv)
         }
     }
     if (strcmp(g_cmd, "info") != 0 && strcmp(g_cmd, "scan") != 0 &&
-        strcmp(g_cmd, "probe") != 0) {
+        strcmp(g_cmd, "probe") != 0 && strcmp(g_cmd, "perf-server") != 0) {
         fprintf(stderr, "unknown command %s\n", g_cmd);
         return 2;
     }
@@ -644,8 +650,15 @@ int main(int argc, char **argv)
         /* keep stderr quiet unless asked */
     }
 
-    ble_hs_cfg.sync_cb = on_sync;
     nimble_port_init();
+    ble_hs_cfg.sync_cb = on_sync;
+    if (strcmp(g_cmd, "perf-server") == 0) {
+        int rc = perf_server_init();
+        if (rc != 0) {
+            fprintf(stderr, "blectl: perf-server init rc=%d\n", rc);
+            return 1;
+        }
+    }
 
     pthread_t host_thread;
     pthread_create(&host_thread, NULL, host_thread_fn, NULL);
@@ -659,6 +672,7 @@ int main(int argc, char **argv)
     if (strcmp(g_cmd, "info") == 0) rc = do_info();
     else if (strcmp(g_cmd, "scan") == 0) rc = do_scan();
     else if (strcmp(g_cmd, "probe") == 0) rc = do_probe();
+    else if (strcmp(g_cmd, "perf-server") == 0) rc = perf_server_run();
     else { fprintf(stderr, "unknown command %s\n", g_cmd); usage(); rc = 2; }
 
     hci_cdc_close();

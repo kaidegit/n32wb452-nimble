@@ -35,6 +35,8 @@
 #include "log.h"
 #include "app_nimble.h"
 #include "hci_spi.h"
+#include "gatt_perf.h"
+#include "perf_clock_n32.h"
 
 #define TAG "ble.app"
 
@@ -287,6 +289,18 @@ static const struct ble_gatt_svc_def g_gatt_services[] = {
                 .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
                 .val_handle = &g_tst_phy_handle,
             },
+            {
+                .uuid = &gatt_perf_control_uuid.u,
+                .access_cb = gatt_perf_access,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
+                .val_handle = &gatt_perf_control_handle,
+            },
+            {
+                .uuid = &gatt_perf_data_uuid.u,
+                .access_cb = gatt_perf_access,
+                .flags = BLE_GATT_CHR_F_WRITE_NO_RSP | BLE_GATT_CHR_F_NOTIFY,
+                .val_handle = &gatt_perf_data_handle,
+            },
             { 0 }
         },
     },
@@ -300,6 +314,7 @@ static void start_advertise(void);
 static int gap_event(struct ble_gap_event *event, void *arg)
 {
     (void)arg;
+    gatt_perf_gap_event(event);
 
     switch (event->type) {
     case BLE_GAP_EVENT_CONNECT:
@@ -421,7 +436,9 @@ static void vendor_set_bdaddr(const uint8_t addr_le[6])
 static void on_sync(void)
 {
     /* Static address, LSB-first. */
-    static const uint8_t addr_le[6] = { 0x66, 0x84, 0x68, 0x26, 0xAB, 0x1E };
+    /* New GATT schema identity: CoreBluetooth may retain the old database
+     * (ending :66) across an unbonded firmware upgrade. */
+    static const uint8_t addr_le[6] = { 0x67, 0x84, 0x68, 0x26, 0xAB, 0x1E };
     vendor_set_bdaddr(addr_le);
     start_advertise();
 }
@@ -446,6 +463,9 @@ void app_nimble_start(void)
 
     /* nimble_port_init() ends with ble_transport_ll_init() → SPI IRQ on. */
     nimble_port_init();
+    gatt_perf_clock_init();
+    gatt_perf_init();
+    ble_att_set_preferred_mtu(247);
 
     rc = ble_gatts_count_cfg(g_gatt_services);
     configASSERT(rc == 0);
@@ -457,9 +477,11 @@ void app_nimble_start(void)
     ble_hs_cfg.sync_cb  = on_sync;
     ble_hs_cfg.reset_cb = on_reset;
 
-    /* Host task at priority 4: above the SPI RX task (3) so TX-side
-     * ready-waits in ble_spi_tx yield to a pending RX. */
-    nimble_port_freertos_init(host_task);
+    /* The upstream helper creates the host at priority 1. RX at priority 3
+     * could then preempt a checked SPI write and clear its wakeup handshake.
+     * Run above RX; wait_ready_with_rx explicitly sleeps when RX must drain. */
+    BaseType_t created = xTaskCreate(host_task, "ble", 1024, NULL, 4, NULL);
+    configASSERT(created == pdPASS);
 
     LOGI(TAG, "nimble host started");
 }

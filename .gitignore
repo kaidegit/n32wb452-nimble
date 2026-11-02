@@ -9,3 +9,5 @@ compile_commands.json
 __pycache__/
 *.pyc
 third_party/nanopb/generator/proto/nanopb_pb2.py
+
+tools/macos-gatt-perf/.build/

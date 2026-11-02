@@ -32,6 +32,7 @@
 #include "os/os_mbuf.h"
 
 #include "hci_cdc.h"
+#include "hci_fixup.h"
 
 #define HCI_H4_CMD  0x01
 #define HCI_H4_ACL  0x02
@@ -159,22 +160,6 @@ void hci_cdc_close(void)
 
 /* ----------------------------------------------------------------- h4 rx -*/
 
-/* Same patches as firmware components/ble/hci_fixup.c */
-static void fixup_evt(uint8_t *evbuf, uint8_t param_len)
-{
-    uint16_t op;
-
-    if (evbuf[0] != 0x0E || param_len < 9 || evbuf[5] != 0x00) {
-        return;
-    }
-    op = (uint16_t)evbuf[3] | ((uint16_t)evbuf[4] << 8);
-    if (op == 0x1003) {
-        evbuf[10] |= 0x60;    /* LE Supported (Controller) */
-    } else if (op == 0x2003) {
-        evbuf[6] |= 0x20;     /* Data Length Extension */
-    }
-}
-
 static void publish_evt(const uint8_t *pkt, uint8_t param_len)
 {
     uint8_t *evbuf = (uint8_t *)ble_transport_alloc_evt(0);
@@ -186,7 +171,7 @@ static void publish_evt(const uint8_t *pkt, uint8_t param_len)
         return;
     }
     memcpy(evbuf, pkt, 2 + param_len);
-    fixup_evt(evbuf, param_len);
+    hci_fixup_evt(evbuf, param_len);
     ble_transport_to_hs_evt(evbuf);
 }
 

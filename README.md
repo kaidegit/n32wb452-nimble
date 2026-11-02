@@ -13,7 +13,7 @@ N32WB452 上的 Apache NimBLE 工程。闭源 NZ8801 BLE controller（片内协�
 └──────────────────────────────────────────────────────────────────────────────┘
 ┌─────────────────────────────── ③ macOS blectl ──────────────────────────────┐
 │  Mac: NimBLE host（linux NPL + Darwin 后端）── /dev/cu.usbmodem* ── ②       │
-│  命令行：info / scan / probe（GATT 发现 + NUS 回环测试）                     │
+│  命令行：info / scan / probe / perf-server（GATT 吞吐服务）                │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -87,7 +87,7 @@ cmake --build build-bridge
 ```
 
 产物 `build-*/n32wb452_ble_{nimble,bridge}`（+ .bin/.hex/.map）。
-当前体积（链接器统计）：nimble 90028 bytes flash / 82360 bytes RAM；
+当前体积（链接器统计）：nimble 约 91 KiB flash / 81 KiB RAM；
 bridge 加入 HID 后约 54 KiB flash / 97 KiB RAM。RAM 包含 FreeRTOS 56 KiB 堆、libc 8 KiB 堆与 MSP 最小预留。
 
 macOS 工具（需要 HIDAPI，例如 `brew install hidapi`；工具专用 JSON 库在 `tools/blectl/third_party`）：
@@ -164,10 +164,40 @@ NimBLE 内部日志走 stderr，命令输出走 stdout（便于管道处理）�
 ## 当前状态
 
 - 两种固件均完成构建、烧录与启动验证；NimBLE 广播已由 Mac 扫描确认。
-- 原有 CDC bridge 已通过板级验证；本次新增 HID 和主机下载流程已通过构建及原生测试，尚待板级验证。
+- CDC + HID bridge、主机 JSON 下载和小核启停已通过 macOS 板级验证，见
+  [HID 测试记录](docs/bridge-hid-macos-test-2026-11-02.md)。
 - macOS / 安卓双平台板级验收（广播/连接/GATT 发现/echo）通过，报告见
   [docs/ble-test-2026-11-02.md](docs/ble-test-2026-11-02.md)。
 - 修复原因、历史 HardFault 的复现边界和验证日志见 [docs/BOOT_FIX.md](docs/BOOT_FIX.md)。
+
+## GATT 吞吐测试
+
+两种模式共用 `components/gatt_perf` 的单向 bulk 服务，同一个 macOS
+CoreBluetooth central 做无应答写和通知测试。工具独立放在
+`tools/macos-gatt-perf`，不修改 `tools/macos-ble` 软链指向的参考工程。
+
+```sh
+# nimble 固件：烧录后直接测
+python3 tools/macos-gatt-perf/run.py --mode nimble --name N32-NimBLE \
+    --request-dle --size 182
+
+# bridge 固件：另一个终端先运行服务，再测
+tools/blectl/build/blectl perf-server
+python3 tools/macos-gatt-perf/run.py --mode bridge --name N32-Bridge-Perf \
+    --request-dle --size 182
+
+ctest --test-dir tools/blectl/build --output-on-failure
+```
+
+默认每方向三次、每次 30 秒，逐包校验序号与内容，排空尾部后核对双方字节数；
+失败立即停止并保存原始记录。上行以 MCU 独立 TIM2 1 MHz 时钟或桌面单调时钟
+计时。每轮记录实际 MTU、DLE、连接间隔与背压，测量期间不要访问 RTT/GDB。
+协议和限制见 [服务说明](components/gatt_perf/README.md)，测试条件、修复和实测
+结果见 [GATT 性能报告](docs/gatt-perf-2026-11-02.md)。
+
+新增 GATT 特征后，为避开 macOS 的旧数据库缓存，nimble 开发地址更新为
+`1E:AB:26:68:84:67`，bridge 测试服务默认为 `…:68`。NZ8801 不支持 PHY
+读写命令，工具明确记录默认 1M 降级；不能将其当成参考工程的 PHY 验收通过。
 
 ## 许可
 

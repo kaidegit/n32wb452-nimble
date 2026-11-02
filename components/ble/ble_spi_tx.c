@@ -22,12 +22,10 @@ int ble_spi_rx_pending(void);   /* from hci_spi.c */
 
 /* Only sleep before CS assertion. RX may clear wakeup, so reassert after
  * draining. Waiting for rx_pending as well as the IRQ line prevents
- * resuming mid-read. TX runs at lower priority than the RX task, so RX
- * cannot start between this check and TX CS. */
-static bool wait_ready_with_rx(void)
+ * resuming mid-read. The caller rechecks with task switching suspended
+ * before asserting CS, since an RX task can otherwise clear the handshake. */
+static bool wait_ready_with_rx(TickType_t start)
 {
-    TickType_t start = xTaskGetTickCount();
-
     eif_pull_up_wakeup_io();
     while (xTaskGetTickCount() - start < pdMS_TO_TICKS(1600)) {
         if (ble_spi_rx_pending()) {
@@ -48,15 +46,28 @@ static bool wait_ready_with_rx(void)
 
 int ble_spi_send_checked(const uint8_t *data, uint16_t len)
 {
-    eif_pull_up_wakeup_io();
-    if (!wait_ready_with_rx()) {
-        return -1;
+    TickType_t start = xTaskGetTickCount();
+    for (;;) {
+        if (!wait_ready_with_rx(start)) return -1;
+
+        /* RX and TX use the same SPI peripheral. Keep the CS transaction
+         * indivisible with respect to other tasks, while allowing USB/SPI
+         * interrupts to run and queue their work. Never suspend while waiting
+         * for ready: the pending RX task must be allowed to drain first. */
+        vTaskSuspendAll();
+        if (ble_spi_rx_pending() || !eif_get_status_io_value()) {
+            xTaskResumeAll();
+            continue;
+        }
+        GPIO_WriteBit(BLE_INTERNAL_CS_PORT, BLE_INTERNAL_CS_PIN, 0);
+        for (uint16_t i = 0; i < len; ++i) {
+            (void)QSPI_ReadWriteByte(data[i]);
+        }
+        GPIO_WriteBit(BLE_INTERNAL_CS_PORT, BLE_INTERNAL_CS_PIN, 1);
+        xTaskResumeAll();
+        break;
     }
-    GPIO_WriteBit(BLE_INTERNAL_CS_PORT, BLE_INTERNAL_CS_PIN, 0);
-    for (uint16_t i = 0; i < len; ++i) {
-        (void)QSPI_ReadWriteByte(data[i]);
-    }
-    GPIO_WriteBit(BLE_INTERNAL_CS_PORT, BLE_INTERNAL_CS_PIN, 1);
+    /* Preserve the vendor driver's inter-frame delay. */
     eif_delay_us(1000);
     return 0;
 }
