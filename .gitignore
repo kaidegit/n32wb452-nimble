@@ -1,0 +1,7 @@
+build*/
+cmake-build-*/
+tools/blectl/build/
+.DS_Store
+*.swp
+compile_commands.json
+.cache/
