@@ -132,6 +132,13 @@ static uint8_t g_tst_echo_buf[TST_ECHO_BUF_LEN];
 static uint16_t g_tst_echo_len;
 static uint8_t g_phy_pending, g_phy_status, g_phy_requested;
 
+/* Raw HCI status byte for the 3E04 read: host errors outside the HCI range
+ * map to 0xFE so tool-side diagnostics can tell them apart. */
+#define PHY_HCI_STATUS(rc) \
+    (((rc) >= BLE_HS_ERR_HCI_BASE && \
+      (rc) < (BLE_HS_ERR_HCI_BASE + 0x100)) ? \
+     (uint8_t)((rc) - BLE_HS_ERR_HCI_BASE) : 0xFE)
+
 static int tst_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                          struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
@@ -147,7 +154,17 @@ static int tst_access_cb(uint16_t conn_handle, uint16_t attr_handle,
         if (attr_handle == g_tst_phy_handle) {
             rc = ble_gap_read_le_phy(conn_handle, &phy[1], &phy[2]);
             if (rc != 0) {
-                return BLE_ATT_ERR_UNLIKELY;
+                /* The NZ8801 rejects the LE Read PHY command. LE mandates
+                 * 1M as the default PHY, and no PHY update can succeed on
+                 * this controller, so report the link default and surface
+                 * the refusal in the status byte instead of failing the
+                 * ATT read with an opaque error. */
+                LOGW(TAG, "phy read hci rc=%d status=0x%02X", rc,
+                     g_phy_status ? g_phy_status : PHY_HCI_STATUS(rc));
+                phy[1] = phy[2] = 1;
+                if (g_phy_status == 0) {
+                    g_phy_status = PHY_HCI_STATUS(rc);
+                }
             }
             phy[3] = g_phy_pending;
             phy[4] = g_phy_status;
@@ -198,10 +215,16 @@ static int tst_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                 break;
             }
             rc = ble_gap_set_prefered_le_phy(conn_handle, mask, mask, opts);
-            LOGI(TAG, "phy request: conn=%u sel=%u rc=%d", conn_handle,
-                 phy[0], rc);
             if (rc != 0) {
-                return BLE_ATT_ERR_UNLIKELY;
+                /* Accept the write at the ATT layer and report the
+                 * controller's refusal through the status byte; failing
+                 * the ATT write would hide the actual HCI error. */
+                LOGW(TAG, "phy req: conn=%u sel=%u rc=%d hci=0x%02X",
+                     conn_handle, phy[0], rc, PHY_HCI_STATUS(rc));
+                g_phy_requested = phy[0];
+                g_phy_status = PHY_HCI_STATUS(rc);
+                g_phy_pending = 0;
+                return 0;
             }
             g_phy_requested = phy[0];
             g_phy_pending = 1;

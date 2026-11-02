@@ -7,7 +7,11 @@
 #define configUSE_PORT_OPTIMISED_TASK_SELECTION 0
 #define configUSE_TICKLESS_IDLE                 0
 #define configCPU_CLOCK_HZ                      (144000000U)
-#define configSYSTICK_CLOCK_HZ                  (configCPU_CLOCK_HZ)
+/* Do NOT define configSYSTICK_CLOCK_HZ here, even as configCPU_CLOCK_HZ: the
+ * ARM_CM4F port treats any user definition as "SysTick runs from an external
+ * reference" and clears CLKSOURCE; that reference is dead on the N32WB452 and
+ * the tick freezes at 0 (observed: CTRL=0x3, VAL=0, xTickCount never moves).
+ * Undefined, the port selects the core clock itself. */
 #define configTICK_RATE_HZ                      ((TickType_t)1000)
 #define configMAX_PRIORITIES                    (16)
 #define configMINIMAL_STACK_SIZE                ((uint16_t)128)

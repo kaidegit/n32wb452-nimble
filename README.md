@@ -6,7 +6,7 @@ N32WB452 上的 Apache NimBLE 工程。闭源 NZ8801 BLE controller（片内协�
 ```
 ┌─────────────────────────────── ① nimble 固件 ───────────────────────────────┐
 │  N32WB452 M4F: FreeRTOS + NimBLE host ── SPI HCI (H4) ── NZ8801 controller  │
-│  广播 NUS 兼容 echo 服务，手机/电脑可连接                                    │
+│  广播 NUS 兼容 echo 服务 + 7A02480E 测试服务（uptime/echo/PHY）              │
 └──────────────────────────────────────────────────────────────────────────────┘
 ┌─────────────────────────────── ② bridge 固件 ───────────────────────────────┐
 │  N32WB452 M4: USB CDC ACM ⇄ SPI H4 透传（NZ8801 调试通道，无 host 逻辑）     │
@@ -41,7 +41,7 @@ toolchain-arm-gcc.cmake        arm-none-eabi 工具链（自动探测本机路�
 N32WB452_Series.yaml           probe-rs 芯片定义
 app/                           固件源码
   main.c                       公共启动：时钟/RTT/FreeRTOS/固件下载链 + 模式分发
-  app_nimble.c/.h              ① NimBLE host + NUS echo 服务 + 广播 + vendor 0xFC32
+  app_nimble.c/.h              ① NimBLE host + NUS echo 服务 + 7A02480E 测试服务 + 广播 + vendor 0xFC32
   app_bridge.c/.h              ② CherryUSB CDC ⇄ SPI H4 双向转发
   n32wb452_it.c/.h             EXTI15_10/TIM3/fault dump（SVC/PendSV 由 FreeRTOS 宏映射）
   syscalls.c                   printf→RTT、_sbrk
@@ -57,6 +57,7 @@ tools/
   android-ble -> /…/ch32v208-nimble/tools/android-ble  软链：Android 测试端
 FIX_BOOT_PROMPT.md             启动问题调试交接文档（历史记录）
 docs/BOOT_FIX.md               启动修复原因与两种模式的板上验证记录
+docs/ble-test-2026-11-02.md    macOS/安卓双平台板级验收测试报告
 ```
 
 `third_party/` 内容（均从参考工程/官方发布裁剪拷贝）：
@@ -143,10 +144,22 @@ tools/blectl/build/blectl --port /dev/cu.usbmodemXXX scan        # 多 CDC 时�
 另：闭源驱动要求 `N32WB452_BT_API` 宏（SDK `Interface.c` 的 `#else` 分支编不过），
 `components/ble/inc/` 下提供了它依赖的三个胶水头文件。
 
+另外两个实测发现的平台坑（已修复，保持现状勿回退）：
+
+4. **FreeRTOSConfig 不得自定义 `configSYSTICK_CLOCK_HZ`**（哪怕值等于 CPU 时钟）：
+   ARM_CM4F port 会因此清 SysTick CLKSOURCE 位选择外部参考时钟，N32WB452 上该
+   时钟没跑，tick 冻结为 0（vTaskDelay/callout/软件定时器全瘫，纯事件驱动的 BLE
+   不易察觉）。见 `app/FreeRTOSConfig.h` 注释。
+5. **NZ8801 不实现 LE PHY HCI 命令**（LE Read/Set PHY 返回 Unknown Command 0x01）：
+   测试服务 3E04 特征做优雅降级——读回退 LE 默认 1M、status 字节上报真实 HCI
+   错误码。2M/Coded PHY 在此 controller 上不可用，测试工具的 PHY 用例属预期失败。
+
 ## 当前状态
 
 - 两种固件均完成构建、烧录与启动验证；NimBLE 广播已由 Mac 扫描确认。
 - bridge 已枚举 USB CDC 串口，blectl 返回 `host synced: yes`。
+- macOS / 安卓双平台板级验收（广播/连接/GATT 发现/echo）通过，报告见
+  [docs/ble-test-2026-11-02.md](docs/ble-test-2026-11-02.md)。
 - 修复原因、历史 HardFault 的复现边界和验证日志见 [docs/BOOT_FIX.md](docs/BOOT_FIX.md)。
 
 ## 许可
